@@ -18,7 +18,7 @@ const getConfig = async () => {
 
         const cfg = {
             smtp_host:    (dbConfig.smtp_host   && dbConfig.smtp_host.trim())   || process.env.SMTP_HOST   || '',
-            smtp_port:    parseInt((dbConfig.smtp_port && dbConfig.smtp_port.trim()) || process.env.SMTP_PORT || 465),
+            smtp_port:    parseInt((dbConfig.smtp_port && dbConfig.smtp_port.trim()) || process.env.SMTP_PORT || 587),
             smtp_user:    (dbConfig.smtp_email  && dbConfig.smtp_email.trim())  || process.env.SMTP_USER   || '',
             smtp_pass:    (dbConfig.smtp_pass   && dbConfig.smtp_pass.trim())   || process.env.SMTP_PASS   || '',
             twilio_sid:   (dbConfig.twilio_sid  && dbConfig.twilio_sid.trim())  || process.env.TWILIO_ACCOUNT_SID   || '',
@@ -26,7 +26,6 @@ const getConfig = async () => {
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
 
-        // Debug: log where the config is coming from
         console.log(`📧 SMTP Source: ${dbConfig.smtp_host ? 'Database' : '.env'} | Host: ${cfg.smtp_host} | Port: ${cfg.smtp_port} | User: ${cfg.smtp_user}`);
 
         return cfg;
@@ -35,7 +34,7 @@ const getConfig = async () => {
         console.error('⚠️  Config fetch error, falling back to .env:', e.message);
         return {
             smtp_host:    process.env.SMTP_HOST    || '',
-            smtp_port:    parseInt(process.env.SMTP_PORT || 465),
+            smtp_port:    parseInt(process.env.SMTP_PORT || 587),
             smtp_user:    process.env.SMTP_USER    || '',
             smtp_pass:    process.env.SMTP_PASS    || '',
             twilio_sid:   process.env.TWILIO_ACCOUNT_SID   || '',
@@ -47,6 +46,8 @@ const getConfig = async () => {
 
 /**
  * Send Email Notification
+ * Uses port 587 + STARTTLS (works on Railway / most cloud providers)
+ * Port 465 is often blocked by cloud firewall egress rules
  */
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
@@ -65,32 +66,32 @@ const sendEmail = async (to, subject, html) => {
     }
 
     try {
+        // Port 465 = secure SSL (often blocked on cloud)
+        // Port 587 = STARTTLS (recommended for cloud / Railway)
+        // We auto-switch: if port is 465, use secure=true, else secure=false + STARTTLS
         const isSecure = cfg.smtp_port === 465;
-        console.log(`📡 Connecting to SMTP: ${cfg.smtp_host}:${cfg.smtp_port} | secure=${isSecure}`);
+
+        console.log(`📡 Connecting SMTP: ${cfg.smtp_host}:${cfg.smtp_port} | secure=${isSecure}`);
 
         const transporter = nodemailer.createTransport({
             host:   cfg.smtp_host,
             port:   cfg.smtp_port,
-            secure: isSecure, // true for port 465, false for 587
+            secure: isSecure,  // false for 587 (STARTTLS), true for 465 (SSL)
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            // ✅ KEY FIX: Force IPv4 so Railway doesn't use unreachable IPv6 addresses
+            // ✅ KEY FIX: Force IPv4 - prevents ENETUNREACH on Railway (IPv6 broken)
             family: 4,
-            // Timeouts - prevent hanging for 2 minutes on bad connections
-            connectionTimeout: 15000,
-            greetingTimeout:   15000,
-            socketTimeout:     30000,
-            // Allow self-signed certs (needed by many hosting providers)
+            // Timeouts - prevent server hanging on bad connections
+            connectionTimeout: 20000,  // 20 seconds to connect
+            greetingTimeout:   20000,  // 20 seconds for server greeting
+            socketTimeout:     30000,  // 30 seconds max for socket ops
+            // Disable strict TLS checks (required for shared hosting like Hostinger)
             tls: {
                 rejectUnauthorized: false,
             },
         });
-
-        // Verify connection before sending
-        await transporter.verify();
-        console.log('✅ SMTP Connection verified successfully!');
 
         const info = await transporter.sendMail({
             from:    `"Peach State Residences" <${cfg.smtp_user}>`,
