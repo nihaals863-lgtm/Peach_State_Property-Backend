@@ -9,6 +9,7 @@ const getConfig = async () => {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
         const dbConfig = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
         return {
+            smtp_host: (dbConfig.smtp_host && dbConfig.smtp_host.trim()) || process.env.SMTP_HOST || 'smtp.hostinger.com',
             smtp_user: (dbConfig.smtp_email && dbConfig.smtp_email.trim()) || process.env.SMTP_USER || '',
             smtp_pass: (dbConfig.smtp_pass && dbConfig.smtp_pass.trim()) || process.env.SMTP_PASS || '',
             twilio_sid: (dbConfig.twilio_sid && dbConfig.twilio_sid.trim()) || process.env.TWILIO_ACCOUNT_SID || '',
@@ -16,34 +17,27 @@ const getConfig = async () => {
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
     } catch (e) {
-        return { smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
+        return { smtp_host: 'smtp.hostinger.com', smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
     }
 };
 
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🛡️ ULTIMATE HARDCODE: Use direct IP 172.65.255.143 and Port 465
-    // This bypasses ALL Railway DNS and IPv6 issues.
-    const smtpIP = '172.65.255.143'; 
-    const port = 465;
-
-    console.log(`📡 FORCING CONNECTION: ${smtpIP}:${port} | User: ${cfg.smtp_user}`);
+    // Attempting Port 465 as a last resort with very specific settings
+    console.log(`📡 Final SMTP Attempt: ${cfg.smtp_host}:465`);
 
     try {
         const transporter = nodemailer.createTransport({
-            host: smtpIP,
-            port: port,
+            host: cfg.smtp_host,
+            port: 465,
             secure: true,
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 60000, // 60s timeout for stability
-            greetingTimeout: 60000,
-            socketTimeout: 60000,
+            connectionTimeout: 10000, // Reduced timeout to fail faster if blocked
             tls: {
-                servername: 'smtp.hostinger.com', // Needed for SSL to match Hostinger's cert
                 rejectUnauthorized: false
             }
         });
@@ -55,12 +49,16 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Email SUCCESS via Direct IP and SSL 465');
+        console.log('✅ Success!');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ SMTP FAILURE:', error.message);
-        return { success: false, error: error.message };
+        let errorMsg = error.message;
+        if (errorMsg.includes('timeout')) {
+            errorMsg = "Railway Firewall is blocking Port 465/587. Please contact Railway Support or use a Web API like SendGrid/Mailgun.";
+        }
+        console.error('❌ SMTP Error:', errorMsg);
+        return { success: false, error: errorMsg };
     }
 };
 
