@@ -23,25 +23,25 @@ const getConfig = async () => {
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🛑 HARDCODED IPv4 - No DNS lookup, no IPv6 possible
-    // This is the direct IP for smtp.hostinger.com
+    // Direct IPv4 of Hostinger
     const HOSTINGER_SMTP_IP = '172.65.255.143'; 
+    // Trying Port 587 which is more standard for cloud-to-mail communication
+    const port = 587; 
 
-    console.log(`🚀 FORCING SMTP IP: ${HOSTINGER_SMTP_IP} | User: ${cfg.smtp_user}`);
+    console.log(`🚀 ATTEMPTING SMTP IP: ${HOSTINGER_SMTP_IP} | Port: ${port} | User: ${cfg.smtp_user}`);
 
     try {
         const transporter = nodemailer.createTransport({
             host: HOSTINGER_SMTP_IP,
-            port: 465,
-            secure: true,
+            port: port,
+            secure: false, // Must be false for Port 587
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 20000,
-            socketTimeout: 30000,
+            connectionTimeout: 40000,
+            socketTimeout: 40000,
             tls: {
-                // Must specify servername for SSL certificate to match
                 servername: 'smtp.hostinger.com',
                 rejectUnauthorized: false
             }
@@ -54,11 +54,11 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Success: Email Sent');
+        console.log('✅ Success: Email Sent via Port 587');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ Final Error Type:', error.message);
+        console.error('❌ SMTP Failed:', error.message);
         return { success: false, error: error.message };
     }
 };
