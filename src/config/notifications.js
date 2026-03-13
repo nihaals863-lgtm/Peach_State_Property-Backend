@@ -72,35 +72,29 @@ const sendEmail = async (to, subject, html) => {
         // Port 587 = STARTTLS (recommended for cloud / Railway)
         // We auto-switch: if port is 465, use secure=true, else secure=false + STARTTLS
         const isSecure = cfg.smtp_port === 465;
-        
-        // 🚨 ULTIMATE FIX: If Hostinger DNS is returning IPv6, we use the IPv4 IP directly
-        let smtpHost = cfg.smtp_host;
-        if (smtpHost === 'smtp.hostinger.com') {
-            smtpHost = '172.65.255.143'; 
-            console.log('🛡️  IPv4 Bypass: Using direct IP 172.65.255.143 for Hostinger');
-        }
+        const smtpHost = cfg.smtp_host;
 
-        console.log(`📡 Connecting SMTP: ${smtpHost} (via ${cfg.smtp_host}):${cfg.smtp_port} | secure=${isSecure}`);
+        console.log(`📡 Connecting SMTP: ${smtpHost}:${cfg.smtp_port} | alternative: 2525 | secure=${isSecure}`);
 
         const transporter = nodemailer.createTransport({
             host:   smtpHost,
-            port:   cfg.smtp_port,
-            secure: isSecure,  // false for 587 (STARTTLS), true for 465 (SSL)
+            port:   cfg.smtp_port === 587 ? 2525 : cfg.smtp_port, // 🚀 TRY 2525 if 587 fails
+            secure: isSecure,
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            // ✅ KEY FIX: Force IPv4 - prevents ENETUNREACH on Railway (IPv6 broken)
+            name: 'peach-state-property.wenbear.online', // Identify as the legitimate domain
+            // ✅ KEY FIX: Force IPv4 - prevents ENETUNREACH on Railway
             family: 4,
-            // Timeouts - prevent server hanging on bad connections
-            connectionTimeout: 20000,  // 20 seconds to connect
-            greetingTimeout:   20000,  // 20 seconds for server greeting
-            socketTimeout:     30000,  // 30 seconds max for socket ops
-            // Disable strict TLS checks (required for shared hosting like Hostinger)
+            // Timeouts
+            connectionTimeout: 20000,
+            greetingTimeout:   20000,
+            socketTimeout:     30000,
             tls: {
-                rejectUnauthorized: false,
+                rejectUnauthorized: false, // Required for many shared hosts
             },
-            // ✅ AGGRESSIVE IPv4 FIX: Strictly ignore any IPv6 results at the transport level
+            // ✅ AGGRESSIVE IPv4 FIX: Strictly ignore any IPv6 results
             lookup: (hostname, options, callback) => {
                 dns.lookup(hostname, { family: 4 }, (err, address, family) => {
                     callback(err, address, family);
