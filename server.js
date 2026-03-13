@@ -3,9 +3,24 @@
 // This fixes ENETUNREACH errors on Railway (IPv6 disabled Cloud)
 // ============================================================
 const dns = require('dns');
-if (typeof dns.setDefaultResultOrder === 'function') {
+// Forces IPv4 globally for Node.js 17+
+if (dns.setDefaultResultOrder) {
     dns.setDefaultResultOrder('ipv4first');
 }
+
+// Even more aggressive IPv4 override for all lookups across the entire app
+const originalLookup = dns.lookup;
+dns.lookup = function(hostname, options, callback) {
+  if (typeof options === 'function') {
+    callback = options;
+    options = { family: 4 };
+  } else if (typeof options === 'object') {
+    options.family = 4;
+  } else {
+    options = { family: 4 };
+  }
+  return originalLookup(hostname, options, callback);
+};
 
 const app = require('./src/app');
 const fs = require('fs');

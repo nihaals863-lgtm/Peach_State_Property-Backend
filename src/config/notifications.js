@@ -3,6 +3,8 @@ const twilio = require('twilio');
 const pool = require('./db');
 
 require('dotenv').config();
+const dns = require('dns'); // Added for custom lookup
+
 
 // NOTE: IPv4 is forced globally in server.js (dns.setDefaultResultOrder)
 // The family:4 below is an extra safety layer specifically for nodemailer
@@ -90,6 +92,12 @@ const sendEmail = async (to, subject, html) => {
             // Disable strict TLS checks (required for shared hosting like Hostinger)
             tls: {
                 rejectUnauthorized: false,
+            },
+            // ✅ AGGRESSIVE IPv4 FIX: Strictly ignore any IPv6 results at the transport level
+            lookup: (hostname, options, callback) => {
+                dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+                    callback(err, address, family);
+                });
             },
         });
 
