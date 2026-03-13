@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
 const pool = require('./db');
+const dns = require('dns');
 
 require('dotenv').config();
 
@@ -9,6 +10,7 @@ const getConfig = async () => {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
         const dbConfig = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
         return {
+            smtp_host: (dbConfig.smtp_host && dbConfig.smtp_host.trim()) || process.env.SMTP_HOST || 'smtp.hostinger.com',
             smtp_user: (dbConfig.smtp_email && dbConfig.smtp_email.trim()) || process.env.SMTP_USER || '',
             smtp_pass: (dbConfig.smtp_pass && dbConfig.smtp_pass.trim()) || process.env.SMTP_PASS || '',
             twilio_sid: (dbConfig.twilio_sid && dbConfig.twilio_sid.trim()) || process.env.TWILIO_ACCOUNT_SID || '',
@@ -16,33 +18,37 @@ const getConfig = async () => {
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
     } catch (e) {
-        return { smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
+        return { smtp_host: 'smtp.hostinger.com', smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
     }
 };
 
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // Direct IPv4 of Hostinger
-    const HOSTINGER_SMTP_IP = '172.65.255.143'; 
-    // Trying Port 587 which is more standard for cloud-to-mail communication
-    const port = 587; 
+    // 🚀 USE PORT 2525: Often open on Railway when 465/587 are blocked
+    const port = 2525; 
 
-    console.log(`🚀 ATTEMPTING SMTP IP: ${HOSTINGER_SMTP_IP} | Port: ${port} | User: ${cfg.smtp_user}`);
+    console.log(`📡 TRYING ALTERNATIVE PORT 2525: ${cfg.smtp_host}:${port}`);
 
     try {
         const transporter = nodemailer.createTransport({
-            host: HOSTINGER_SMTP_IP,
+            host: cfg.smtp_host,
             port: port,
-            secure: false, // Must be false for Port 587
+            secure: false, // Must be false for 2525
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 40000,
-            socketTimeout: 40000,
+            // Force IPv4 lookup locally to avoid ENETUNREACH
+            lookup: (hostname, options, callback) => {
+                dns.resolve4(hostname, (err, addresses) => {
+                    if (err || !addresses.length) return dns.lookup(hostname, options, callback);
+                    callback(null, addresses[0], 4);
+                });
+            },
+            connectionTimeout: 30000,
+            socketTimeout: 30000,
             tls: {
-                servername: 'smtp.hostinger.com',
                 rejectUnauthorized: false
             }
         });
@@ -54,11 +60,11 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Success: Email Sent via Port 587');
+        console.log('✅ Email SUCCESS via Port 2525');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ SMTP Failed:', error.message);
+        console.error('❌ Port 2525 Failed:', error.message);
         return { success: false, error: error.message };
     }
 };
