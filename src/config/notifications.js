@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
 const pool = require('./db');
+const dns = require('dns');
 
 require('dotenv').config();
 
@@ -24,19 +25,29 @@ const getConfig = async () => {
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // Attempting Port 465 as a last resort with very specific settings
-    console.log(`📡 Final SMTP Attempt: ${cfg.smtp_host}:465`);
+    // 🛡️ RE-FORCING STABLE PORT 465
+    const port = 465;
+
+    console.log(`📡 SMTP Direct Solve: ${cfg.smtp_host}:${port}`);
 
     try {
         const transporter = nodemailer.createTransport({
             host: cfg.smtp_host,
-            port: 465,
+            port: port,
             secure: true,
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 10000, // Reduced timeout to fail faster if blocked
+            // ✅ CRITICAL: Force IPv4 ONLY inside the transporter
+            lookup: (hostname, options, callback) => {
+                dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+                    callback(err, address, family);
+                });
+            },
+            connectionTimeout: 20000,
+            greetingTimeout: 20000,
+            socketTimeout: 30000,
             tls: {
                 rejectUnauthorized: false
             }
@@ -49,16 +60,12 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Success!');
+        console.log('✅ Success: Email Sent on Railway');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        let errorMsg = error.message;
-        if (errorMsg.includes('timeout')) {
-            errorMsg = "Railway Firewall is blocking Port 465/587. Please contact Railway Support or use a Web API like SendGrid/Mailgun.";
-        }
-        console.error('❌ SMTP Error:', errorMsg);
-        return { success: false, error: errorMsg };
+        console.error('❌ SMTP Error Detail:', error.message);
+        return { success: false, error: error.message };
     }
 };
 
