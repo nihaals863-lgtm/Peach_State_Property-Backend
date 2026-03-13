@@ -3,48 +3,44 @@ const twilio = require('twilio');
 const pool = require('./db');
 
 require('dotenv').config();
-const dns = require('node:dns');
 
-// Force IPv4 for DNS lookups to prevent ENETUNREACH errors on ipv6-disabled environments
-if (dns.setDefaultResultOrder) {
-    dns.setDefaultResultOrder('ipv4first');
-}
-
+// NOTE: IPv4 is forced globally in server.js (dns.setDefaultResultOrder)
+// The family:4 below is an extra safety layer specifically for nodemailer
 
 /**
  * Fetch dynamic config from DB with .env fallback
+ * Priority: Database value -> Env variable -> default
  */
 const getConfig = async () => {
     try {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
         const dbConfig = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
 
-        // Build config with priority: Database -> .env -> defaults
         const cfg = {
-            smtp_host: (dbConfig.smtp_host && dbConfig.smtp_host.trim()) || process.env.SMTP_HOST,
-            smtp_port: parseInt((dbConfig.smtp_port && dbConfig.smtp_port.trim()) || process.env.SMTP_PORT || 587),
-            smtp_user: (dbConfig.smtp_email && dbConfig.smtp_email.trim()) || process.env.SMTP_USER,
-            smtp_pass: (dbConfig.smtp_pass && dbConfig.smtp_pass.trim()) || process.env.SMTP_PASS,
-            twilio_sid: (dbConfig.twilio_sid && dbConfig.twilio_sid.trim()) || process.env.TWILIO_ACCOUNT_SID,
-            twilio_token: (dbConfig.twilio_token && dbConfig.twilio_token.trim()) || process.env.TWILIO_AUTH_TOKEN,
-            twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER,
+            smtp_host:    (dbConfig.smtp_host   && dbConfig.smtp_host.trim())   || process.env.SMTP_HOST   || '',
+            smtp_port:    parseInt((dbConfig.smtp_port && dbConfig.smtp_port.trim()) || process.env.SMTP_PORT || 465),
+            smtp_user:    (dbConfig.smtp_email  && dbConfig.smtp_email.trim())  || process.env.SMTP_USER   || '',
+            smtp_pass:    (dbConfig.smtp_pass   && dbConfig.smtp_pass.trim())   || process.env.SMTP_PASS   || '',
+            twilio_sid:   (dbConfig.twilio_sid  && dbConfig.twilio_sid.trim())  || process.env.TWILIO_ACCOUNT_SID   || '',
+            twilio_token: (dbConfig.twilio_token && dbConfig.twilio_token.trim()) || process.env.TWILIO_AUTH_TOKEN  || '',
+            twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
 
-        // Log where settings are coming from for debugging
-        if (dbConfig.smtp_host) console.log('📧 Using SMTP settings from Database');
-        else console.log('📧 Using SMTP settings from .env');
+        // Debug: log where the config is coming from
+        console.log(`📧 SMTP Source: ${dbConfig.smtp_host ? 'Database' : '.env'} | Host: ${cfg.smtp_host} | Port: ${cfg.smtp_port} | User: ${cfg.smtp_user}`);
 
         return cfg;
+
     } catch (e) {
-        console.error('Config fetch error, using .env fallback:', e.message);
+        console.error('⚠️  Config fetch error, falling back to .env:', e.message);
         return {
-            smtp_host: process.env.SMTP_HOST,
-            smtp_port: parseInt(process.env.SMTP_PORT || 587),
-            smtp_user: process.env.SMTP_USER,
-            smtp_pass: process.env.SMTP_PASS,
-            twilio_sid: process.env.TWILIO_ACCOUNT_SID,
-            twilio_token: process.env.TWILIO_AUTH_TOKEN,
-            twilio_phone: process.env.TWILIO_PHONE_NUMBER,
+            smtp_host:    process.env.SMTP_HOST    || '',
+            smtp_port:    parseInt(process.env.SMTP_PORT || 465),
+            smtp_user:    process.env.SMTP_USER    || '',
+            smtp_pass:    process.env.SMTP_PASS    || '',
+            twilio_sid:   process.env.TWILIO_ACCOUNT_SID   || '',
+            twilio_token: process.env.TWILIO_AUTH_TOKEN    || '',
+            twilio_phone: process.env.TWILIO_PHONE_NUMBER  || '',
         };
     }
 };
@@ -54,53 +50,77 @@ const getConfig = async () => {
  */
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
-    
-    // Safety check: Don't attempt to send if settings are missing
+
+    // Validate SMTP config before attempting connection
     if (!cfg.smtp_host || cfg.smtp_host === '127.0.0.1' || cfg.smtp_host === 'localhost') {
-        console.error('❌ Email Error: Valid SMTP Host not configured (found: ' + cfg.smtp_host + ')');
-        return { success: false, error: 'SMTP Host not configured correctly in Settings or .env' };
+        const msg = `SMTP Host not configured correctly. Found: "${cfg.smtp_host}"`;
+        console.error('❌ Email blocked:', msg);
+        return { success: false, error: msg };
+    }
+
+    if (!cfg.smtp_user || !cfg.smtp_pass) {
+        const msg = 'SMTP User or Password is missing in settings.';
+        console.error('❌ Email blocked:', msg);
+        return { success: false, error: msg };
     }
 
     try {
-        console.log(`📡 Attempting SMTP connection to ${cfg.smtp_host}:${cfg.smtp_port} (User: ${cfg.smtp_user})`);
         const isSecure = cfg.smtp_port === 465;
+        console.log(`📡 Connecting to SMTP: ${cfg.smtp_host}:${cfg.smtp_port} | secure=${isSecure}`);
+
         const transporter = nodemailer.createTransport({
-            host: cfg.smtp_host,
-            port: cfg.smtp_port,
-            secure: isSecure,
+            host:   cfg.smtp_host,
+            port:   cfg.smtp_port,
+            secure: isSecure, // true for port 465, false for 587
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            // Force IPv4 to avoid ENETUNREACH on systems with broken IPv6 (like some Railway regions)
+            // ✅ KEY FIX: Force IPv4 so Railway doesn't use unreachable IPv6 addresses
             family: 4,
-            connectionTimeout: 10000, // 10 seconds
-            greetingTimeout: 10000,   // 10 seconds
-            // Hostinger/Outlook often need this
+            // Timeouts - prevent hanging for 2 minutes on bad connections
+            connectionTimeout: 15000,
+            greetingTimeout:   15000,
+            socketTimeout:     30000,
+            // Allow self-signed certs (needed by many hosting providers)
             tls: {
-                rejectUnauthorized: false
-            }
+                rejectUnauthorized: false,
+            },
         });
 
+        // Verify connection before sending
+        await transporter.verify();
+        console.log('✅ SMTP Connection verified successfully!');
+
         const info = await transporter.sendMail({
-            from: `"Peach State Residences" <${cfg.smtp_user}>`,
+            from:    `"Peach State Residences" <${cfg.smtp_user}>`,
             to,
             subject,
             html,
         });
-        console.log('✅ Email sent: %s', info.messageId);
+
+        console.log('✅ Email sent successfully! Message ID:', info.messageId);
         return { success: true, messageId: info.messageId };
+
     } catch (error) {
-        console.error('❌ Email Error:', error);
+        console.error('❌ Email Error:', error.message);
         return { success: false, error: error.message };
     }
 };
 
 /**
- * Send SMS Notification
+ * Send SMS Notification via Twilio
  */
 const sendSMS = async (to, body) => {
     const cfg = await getConfig();
+
+    // Validate Twilio config before attempting
+    if (!cfg.twilio_sid || !cfg.twilio_token || !cfg.twilio_phone) {
+        const msg = 'Twilio credentials are not configured (SID, Token, or Phone missing).';
+        console.error('❌ SMS blocked:', msg);
+        return { success: false, error: msg };
+    }
+
     try {
         const client = twilio(cfg.twilio_sid, cfg.twilio_token);
         const message = await client.messages.create({
@@ -108,10 +128,11 @@ const sendSMS = async (to, body) => {
             from: cfg.twilio_phone,
             to,
         });
-        console.log('SMS sent: %s', message.sid);
+        console.log('✅ SMS sent successfully! SID:', message.sid);
         return { success: true, sid: message.sid };
+
     } catch (error) {
-        console.error('SMS Error:', error);
+        console.error('❌ SMS Error:', error.message);
         return { success: false, error: error.message };
     }
 };
