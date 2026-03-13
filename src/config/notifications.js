@@ -1,7 +1,6 @@
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
 const pool = require('./db');
-const dns = require('dns');
 
 require('dotenv').config();
 
@@ -9,9 +8,7 @@ const getConfig = async () => {
     try {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
         const dbConfig = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
-
         return {
-            smtp_host: (dbConfig.smtp_host && dbConfig.smtp_host.trim()) || process.env.SMTP_HOST || 'smtp.hostinger.com',
             smtp_user: (dbConfig.smtp_email && dbConfig.smtp_email.trim()) || process.env.SMTP_USER || '',
             smtp_pass: (dbConfig.smtp_pass && dbConfig.smtp_pass.trim()) || process.env.SMTP_PASS || '',
             twilio_sid: (dbConfig.twilio_sid && dbConfig.twilio_sid.trim()) || process.env.TWILIO_ACCOUNT_SID || '',
@@ -19,38 +16,34 @@ const getConfig = async () => {
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
     } catch (e) {
-        return {
-            smtp_host: 'smtp.hostinger.com',
-            smtp_user: process.env.SMTP_USER,
-            smtp_pass: process.env.SMTP_PASS,
-        };
+        return { smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
     }
 };
 
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🛡️ THE ULTIMATE BYPASS: If Hostinger DNS is giving IPv6, use direct IPv4.
-    // Hostinger's static IPv4 for SMTP is 172.65.255.143
-    const directIP = '172.65.255.143';
-    const port = 587;
+    // 🛡️ FINAL STABILITY CONFIG: Port 465 (Direct SSL)
+    // Using direct IPv4 to bypass Railway's broken IPv6 DNS resolution
+    const smtpIP = '172.65.255.143'; 
+    const port = 465;
 
-    console.log(`📡 SMTP Connect: ${directIP} (via ${cfg.smtp_host}):${port} | User: ${cfg.smtp_user}`);
+    console.log(`📡 SMTP Connect: ${smtpIP}:465 (SSL) | User: ${cfg.smtp_user}`);
 
     try {
         const transporter = nodemailer.createTransport({
-            host: directIP, // Use IP directly to avoid DNS lookup and IPv6 issues
+            host: smtpIP,
             port: port,
-            secure: false, // STARTTLS
+            secure: true, // TRUE for 465 (SSL/TLS)
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 20000,
-            greetingTimeout: 20000,
-            socketTimeout: 30000,
+            connectionTimeout: 40000, // 40 seconds
+            greetingTimeout: 40000,
+            socketTimeout: 60000,
             tls: {
-                // IMPORTANT: Since we use an IP, we must specify the servername so SSL certificate matches
+                // IMPORTANT: Match certificate with hostinger hostname
                 servername: 'smtp.hostinger.com',
                 rejectUnauthorized: false
             }
@@ -63,18 +56,17 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Email SUCCESS with Direct IP!');
+        console.log('✅ Success: Email Sent on Railway via Port 465');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ Email Failed:', error.message);
+        console.error('❌ Final Error Try:', error.message);
         return { success: false, error: error.message };
     }
 };
 
 const sendSMS = async (to, body) => {
     const cfg = await getConfig();
-    if (!cfg.twilio_sid || !cfg.twilio_token) return { success: false, error: 'Twilio missing' };
     try {
         const client = twilio(cfg.twilio_sid, cfg.twilio_token);
         const message = await client.messages.create({ body, from: cfg.twilio_phone, to });
