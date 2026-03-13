@@ -25,31 +25,34 @@ const getConfig = async () => {
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🛡️ RE-FORCING STABLE PORT 465
-    const port = 465;
+    // 🛡️ USE PORT 587 (STARTTLS) - often more reliable on Railway than 465
+    const port = 587;
 
-    console.log(`📡 SMTP Direct Solve: ${cfg.smtp_host}:${port}`);
+    console.log(`📡 SMTP Connect: ${cfg.smtp_host}:${port} | User: ${cfg.smtp_user}`);
 
     try {
         const transporter = nodemailer.createTransport({
             host: cfg.smtp_host,
             port: port,
-            secure: true,
+            secure: false, // Port 587 uses STARTTLS (secure: false)
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            // ✅ CRITICAL: Force IPv4 ONLY inside the transporter
+            // ✅ FORCE IPv4 - prevents the ENETUNREACH error on Railway
             lookup: (hostname, options, callback) => {
                 dns.lookup(hostname, { family: 4 }, (err, address, family) => {
                     callback(err, address, family);
                 });
             },
-            connectionTimeout: 20000,
-            greetingTimeout: 20000,
-            socketTimeout: 30000,
+            connectionTimeout: 30000, // 30s
+            greetingTimeout: 30000,
+            socketTimeout: 45000,
             tls: {
-                rejectUnauthorized: false
+                // Helps bypass certain firewall filtering by being explicit
+                servername: cfg.smtp_host,
+                rejectUnauthorized: false,
+                minVersion: 'TLSv1.2'
             }
         });
 
