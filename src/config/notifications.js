@@ -9,6 +9,7 @@ const getConfig = async () => {
     try {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
         const dbConfig = rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
+
         return {
             smtp_host: (dbConfig.smtp_host && dbConfig.smtp_host.trim()) || process.env.SMTP_HOST || 'smtp.hostinger.com',
             smtp_user: (dbConfig.smtp_email && dbConfig.smtp_email.trim()) || process.env.SMTP_USER || '',
@@ -18,41 +19,40 @@ const getConfig = async () => {
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER || '',
         };
     } catch (e) {
-        return { smtp_host: 'smtp.hostinger.com', smtp_user: process.env.SMTP_USER, smtp_pass: process.env.SMTP_PASS };
+        return {
+            smtp_host: 'smtp.hostinger.com',
+            smtp_user: process.env.SMTP_USER,
+            smtp_pass: process.env.SMTP_PASS,
+        };
     }
 };
 
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🛡️ USE PORT 587 (STARTTLS) - often more reliable on Railway than 465
+    // 🛡️ THE ULTIMATE BYPASS: If Hostinger DNS is giving IPv6, use direct IPv4.
+    // Hostinger's static IPv4 for SMTP is 172.65.255.143
+    const directIP = '172.65.255.143';
     const port = 587;
 
-    console.log(`📡 SMTP Connect: ${cfg.smtp_host}:${port} | User: ${cfg.smtp_user}`);
+    console.log(`📡 SMTP Connect: ${directIP} (via ${cfg.smtp_host}):${port} | User: ${cfg.smtp_user}`);
 
     try {
         const transporter = nodemailer.createTransport({
-            host: cfg.smtp_host,
+            host: directIP, // Use IP directly to avoid DNS lookup and IPv6 issues
             port: port,
-            secure: false, // Port 587 uses STARTTLS (secure: false)
+            secure: false, // STARTTLS
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            // ✅ FORCE IPv4 - prevents the ENETUNREACH error on Railway
-            lookup: (hostname, options, callback) => {
-                dns.lookup(hostname, { family: 4 }, (err, address, family) => {
-                    callback(err, address, family);
-                });
-            },
-            connectionTimeout: 30000, // 30s
-            greetingTimeout: 30000,
-            socketTimeout: 45000,
+            connectionTimeout: 20000,
+            greetingTimeout: 20000,
+            socketTimeout: 30000,
             tls: {
-                // Helps bypass certain firewall filtering by being explicit
-                servername: cfg.smtp_host,
-                rejectUnauthorized: false,
-                minVersion: 'TLSv1.2'
+                // IMPORTANT: Since we use an IP, we must specify the servername so SSL certificate matches
+                servername: 'smtp.hostinger.com',
+                rejectUnauthorized: false
             }
         });
 
@@ -63,17 +63,18 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Success: Email Sent on Railway');
+        console.log('✅ Email SUCCESS with Direct IP!');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ SMTP Error Detail:', error.message);
+        console.error('❌ Email Failed:', error.message);
         return { success: false, error: error.message };
     }
 };
 
 const sendSMS = async (to, body) => {
     const cfg = await getConfig();
+    if (!cfg.twilio_sid || !cfg.twilio_token) return { success: false, error: 'Twilio missing' };
     try {
         const client = twilio(cfg.twilio_sid, cfg.twilio_token);
         const message = await client.messages.create({ body, from: cfg.twilio_phone, to });
