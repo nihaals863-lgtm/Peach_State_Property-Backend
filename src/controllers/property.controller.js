@@ -21,12 +21,18 @@ const getProperties = async (req, res) => {
 
 // @desc    Add Property
 const createProperty = async (req, res) => {
-    const { name, address, city, type, total_units, status } = req.body;
-    const image = req.file ? `/uploads/${req.file.filename}` : null;
+    const { name, address, city, state, zip_code, type, total_units, status } = req.body;
+    let image = null;
+    let imagesArr = [];
+    if (req.files && req.files.length > 0) {
+        imagesArr = req.files.map(f => `/uploads/${f.filename}`);
+        image = imagesArr[0];
+    }
+    const imagesStr = JSON.stringify(imagesArr);
     try {
         const [result] = await pool.query(
-            'INSERT INTO properties (name, address, city, type, total_units, status, image, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, address, city, type, total_units, status, image, req.user.id]
+            'INSERT INTO properties (name, address, city, state, zip_code, type, total_units, status, image, images, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, address, city, state, zip_code, type, total_units, status, image, imagesStr, req.user.id]
         );
         await pool.query('INSERT INTO activity_logs (action, details, user_id) VALUES (?, ?, ?)',
             ['Create Property', `Added property: ${name}`, req.user.id]);
@@ -39,13 +45,30 @@ const createProperty = async (req, res) => {
 // @desc    Update Property
 const updateProperty = async (req, res) => {
     const { id } = req.params;
-    const { name, address, city, type, total_units, status } = req.body;
+    const { name, address, city, state, zip_code, type, total_units, status } = req.body;
+
+    // existing_images could be a string (from single existing image logic) or array of strings, or undefined
+    let existingImages = req.body.existing_images || [];
+    if (typeof existingImages === 'string') {
+        try { existingImages = JSON.parse(existingImages); }
+        catch (e) { existingImages = [existingImages]; }
+    }
+    if (!Array.isArray(existingImages)) existingImages = [];
+
     try {
-        let query = 'UPDATE properties SET name=?, address=?, city=?, type=?, total_units=?, status=?';
-        let params = [name, address, city, type, total_units, status];
-        if (req.file) {
-            query += ', image=?';
-            params.push(`/uploads/${req.file.filename}`);
+        let query = 'UPDATE properties SET name=?, address=?, city=?, state=?, zip_code=?, type=?, total_units=?, status=?';
+        let params = [name, address, city, state, zip_code, type, total_units, status];
+
+        let newImages = [];
+        if (req.files && req.files.length > 0) {
+            newImages = req.files.map(f => `/uploads/${f.filename}`);
+        }
+
+        let finalImages = [...existingImages, ...newImages];
+
+        if (req.files && req.files.length > 0 || req.body.images_changed === 'true') {
+            query += ', image=?, images=?';
+            params.push(finalImages.length > 0 ? finalImages[0] : null, JSON.stringify(finalImages));
         }
         query += ' WHERE id=?';
         params.push(id);

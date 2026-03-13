@@ -7,17 +7,17 @@ const multer = require('multer');
 const path = require('path');
 
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'uploads/'),
+    destination: (req, file, cb) => cb(null, path.join(process.cwd(), 'uploads')),
     filename: (req, file, cb) => cb(null, `prop-${Date.now()}${path.extname(file.originalname)}`)
 });
 const upload = multer({ storage });
 
 router.route('/')
     .get(protect, getProperties)
-    .post(protect, upload.single('image'), createProperty);
+    .post(protect, upload.any(), createProperty);
 
 router.route('/:id')
-    .put(protect, upload.single('image'), updateProperty)
+    .put(protect, upload.any(), updateProperty)
     .delete(protect, deleteProperty);
 
 // Metadata (Dynamic Types)

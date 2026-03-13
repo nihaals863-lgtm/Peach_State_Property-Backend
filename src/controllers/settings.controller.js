@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
+const { sendEmail, sendSMS } = require('../config/notifications');
 
 // @desc    Get all users (Admin Only)
 const getUsers = async (req, res) => {
@@ -69,4 +70,49 @@ const updateIntegrations = async (req, res) => {
     }
 };
 
-module.exports = { getUsers, updateUser, deleteUser, getIntegrations, updateIntegrations };
+// @desc    Test Email Integration
+const testEmail = async (req, res) => {
+    const { email } = req.body;
+    try {
+        const result = await sendEmail(
+            email || req.user.email,
+            'Test Email Notification - Peach State Residences',
+            '<h1>Configuration Successful!</h1><p>This is a test email to verify your SMTP settings.</p>'
+        );
+        if (result.success) {
+            res.json({ success: true, message: 'Test email sent successfully' });
+        } else {
+            res.status(500).json({ success: false, message: result.error });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// @desc    Test SMS Integration
+const testSMS = async (req, res) => {
+    const { phone } = req.body;
+    try {
+        const result = await sendSMS(
+            phone,
+            'Test SMS from Peach State Residences. Configuration Successful!'
+        );
+        if (result.success) {
+            res.json({ success: true, message: 'Test SMS sent successfully' });
+        } else {
+            res.status(500).json({ success: false, message: result.error });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+module.exports = {
+    getUsers,
+    updateUser,
+    deleteUser,
+    getIntegrations,
+    updateIntegrations,
+    testEmail,
+    testSMS
+};

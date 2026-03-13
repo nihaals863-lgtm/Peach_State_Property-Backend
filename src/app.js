@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 require('express-async-errors'); // Avoid unhandled promise rejection crashes
 require('dotenv').config();
 
@@ -18,34 +19,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev')); // Logger
 
 // CORS setup - IMPORTANT for Railway Frontend connection
-
-// ============================================
-// CORS SETUP
-// ============================================
-
-const allowedOrigins = [
-  'http://localhost:3000', // local frontend
-  'http://localhost:5173',
-  'https://peach-state-property.wenbear.online',// vite
-  process.env.FRONTEND_URL // production frontend
-];
-
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ["GET","POST","PUT","DELETE","PATCH"],
-  allowedHeaders: ["Content-Type","Authorization"]
+    origin: process.env.FRONTEND_URL || '*',
+    credentials: true,
 }));
 
-
 // Setup static file serving for Uploads
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // ============================================
 // 2. ROOT ENDPOINT (Health Check)
