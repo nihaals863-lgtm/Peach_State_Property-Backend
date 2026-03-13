@@ -72,11 +72,18 @@ const sendEmail = async (to, subject, html) => {
         // Port 587 = STARTTLS (recommended for cloud / Railway)
         // We auto-switch: if port is 465, use secure=true, else secure=false + STARTTLS
         const isSecure = cfg.smtp_port === 465;
+        
+        // 🚨 ULTIMATE FIX: If Hostinger DNS is returning IPv6, we use the IPv4 IP directly
+        let smtpHost = cfg.smtp_host;
+        if (smtpHost === 'smtp.hostinger.com') {
+            smtpHost = '172.65.255.143'; 
+            console.log('🛡️  IPv4 Bypass: Using direct IP 172.65.255.143 for Hostinger');
+        }
 
-        console.log(`📡 Connecting SMTP: ${cfg.smtp_host}:${cfg.smtp_port} | secure=${isSecure}`);
+        console.log(`📡 Connecting SMTP: ${smtpHost} (via ${cfg.smtp_host}):${cfg.smtp_port} | secure=${isSecure}`);
 
         const transporter = nodemailer.createTransport({
-            host:   cfg.smtp_host,
+            host:   smtpHost,
             port:   cfg.smtp_port,
             secure: isSecure,  // false for 587 (STARTTLS), true for 465 (SSL)
             auth: {
