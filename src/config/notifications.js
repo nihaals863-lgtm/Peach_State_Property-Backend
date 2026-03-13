@@ -3,6 +3,13 @@ const twilio = require('twilio');
 const pool = require('./db');
 
 require('dotenv').config();
+const dns = require('node:dns');
+
+// Force IPv4 for DNS lookups to prevent ENETUNREACH errors on ipv6-disabled environments
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
+
 
 /**
  * Fetch dynamic config from DB with .env fallback
@@ -22,6 +29,10 @@ const getConfig = async () => {
             twilio_token: (dbConfig.twilio_token && dbConfig.twilio_token.trim()) || process.env.TWILIO_AUTH_TOKEN,
             twilio_phone: (dbConfig.twilio_phone && dbConfig.twilio_phone.trim()) || process.env.TWILIO_PHONE_NUMBER,
         };
+
+        // Log where settings are coming from for debugging
+        if (dbConfig.smtp_host) console.log('📧 Using SMTP settings from Database');
+        else console.log('📧 Using SMTP settings from .env');
 
         return cfg;
     } catch (e) {
@@ -51,6 +62,7 @@ const sendEmail = async (to, subject, html) => {
     }
 
     try {
+        console.log(`📡 Attempting SMTP connection to ${cfg.smtp_host}:${cfg.smtp_port} (User: ${cfg.smtp_user})`);
         const isSecure = cfg.smtp_port === 465;
         const transporter = nodemailer.createTransport({
             host: cfg.smtp_host,
@@ -60,6 +72,10 @@ const sendEmail = async (to, subject, html) => {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
+            // Force IPv4 to avoid ENETUNREACH on systems with broken IPv6 (like some Railway regions)
+            family: 4,
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 10000,   // 10 seconds
             // Hostinger/Outlook often need this
             tls: {
                 rejectUnauthorized: false
