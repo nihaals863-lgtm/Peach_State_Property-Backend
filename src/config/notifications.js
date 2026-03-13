@@ -5,11 +5,9 @@ const dns = require('dns');
 
 require('dotenv').config();
 
-// Force IPv4 globally for Node.js
-if (dns.setDefaultResultOrder) {
-    dns.setDefaultResultOrder('ipv4first');
-}
-
+/**
+ * Fetch dynamic config from DB with .env fallback
+ */
 const getConfig = async () => {
     try {
         const [rows] = await pool.query('SELECT `key`, `value` FROM settings');
@@ -28,31 +26,46 @@ const getConfig = async () => {
     }
 };
 
+/**
+ * Send Email Notification
+ * Optimized for Railway + Hostinger
+ */
 const sendEmail = async (to, subject, html) => {
     const cfg = await getConfig();
     
-    // 🚀 THE BYPASS: Use direct IPv4 of Hostinger but identify via ServerName
-    // This often bypasses cloud firewall egress blocks.
-    const smtpIP = '172.65.255.143'; 
-    const port = 465;
+    // 🚀 STABLE PORT for Hostinger: 465 (SSL)
+    const port = 465; 
 
-    console.log(`🛡️  Direct IP Connect: ${smtpIP} (Host: ${cfg.smtp_host})`);
+    console.log(`📡 SMTP Connect Attempt: ${cfg.smtp_host}:${port}`);
 
     try {
         const transporter = nodemailer.createTransport({
-            host: smtpIP, // Use IP directly 
+            host: cfg.smtp_host,
             port: port,
-            secure: true,
+            secure: true, // true for 465
             auth: {
                 user: cfg.smtp_user,
                 pass: cfg.smtp_pass,
             },
-            connectionTimeout: 30000,
-            socketTimeout: 50000,
+            // Force IPv4 lookup locally in the transporter
+            lookup: (hostname, options, callback) => {
+                dns.resolve4(hostname, (err, addresses) => {
+                    if (err || !addresses.length) {
+                        return dns.lookup(hostname, options, callback);
+                    }
+                    callback(null, addresses[0], 4);
+                });
+            },
+            // High reliability settings
+            connectionTimeout: 30000, // 30s
+            greetingTimeout: 30000,
+            socketTimeout: 60000,
+            pool: true, // Use pooling for better connection management
             tls: {
-                // IMPORTANT: Since we use IP, we must tell SSL we expect 'smtp.hostinger.com'
-                servername: 'smtp.hostinger.com',
-                rejectUnauthorized: false
+                // This tells the server who we are, bypassing some filters
+                servername: cfg.smtp_host,
+                rejectUnauthorized: false,
+                minVersion: 'TLSv1.2'
             }
         });
 
@@ -63,23 +76,18 @@ const sendEmail = async (to, subject, html) => {
             html,
         });
 
-        console.log('✅ Email SUCCESS via Direct IP');
+        console.log('✅ Email Sent successfully!');
         return { success: true, messageId: info.messageId };
 
     } catch (error) {
-        console.error('❌ Email FAILURE:', error.message);
-        // Fallback to hostname if IP fails
-        if (error.message.includes('timeout') || error.message.includes('ECONNREFUSED')) {
-            console.log('🔄 Attempting fallback to standard Hostname...');
-            // ... (recursive or second attempt if needed, but let's try IP first)
-        }
+        console.error('❌ SMTP Error:', error.message);
         return { success: false, error: error.message };
     }
 };
 
 const sendSMS = async (to, body) => {
     const cfg = await getConfig();
-    if (!cfg.twilio_sid || !cfg.twilio_token) return { success: false, error: 'Twilio missing' };
+    if (!cfg.twilio_sid || !cfg.twilio_token) return { success: false, error: 'Twilio setup missing' };
     try {
         const client = twilio(cfg.twilio_sid, cfg.twilio_token);
         const message = await client.messages.create({ body, from: cfg.twilio_phone, to });
